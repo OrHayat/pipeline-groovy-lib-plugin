@@ -1,0 +1,7 @@
+<div>
+  Before using the cache, resolve the requested version (for example <code>master</code>) to the
+  revision it points at now, and key the cache entry by that revision. An entry is then never stale:
+  when the branch moves, the next build resolves a new revision and caches it once. The refresh time
+  is ignored for these entries; unused ones are removed by the regular cache cleanup.
+  Applies to Modern SCM retrievers only.
+</div>

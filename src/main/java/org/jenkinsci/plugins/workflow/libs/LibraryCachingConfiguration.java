@@ -36,6 +36,7 @@ public final class LibraryCachingConfiguration extends AbstractDescribableImpl<L
     private final int refreshTimeMinutes;
     private final String excludedVersionsStr;
     private String includedVersionsStr;
+    private boolean keyByRevision;
 
     private static final String VERSIONS_SEPARATOR = " ";
     private static final String GLOBAL_LIBRARIES_DIR = "global-libraries-cache";
@@ -79,6 +80,19 @@ public final class LibraryCachingConfiguration extends AbstractDescribableImpl<L
         this.includedVersionsStr = Util.fixEmptyAndTrim(includedVersionsStr);
     }
 
+    /**
+     * Key the cache by the revision a version resolves to rather than by the version string.
+     * A revision never changes, so such an entry never goes stale and ignores the refresh time.
+     */
+    public boolean isKeyByRevision() {
+        return keyByRevision;
+    }
+
+    @DataBoundSetter
+    public void setKeyByRevision(boolean keyByRevision) {
+        this.keyByRevision = keyByRevision;
+    }
+
     private static Stream<String> split(@CheckForNull String list) {
         if (list == null) {
             return Stream.empty();
@@ -106,7 +120,7 @@ public final class LibraryCachingConfiguration extends AbstractDescribableImpl<L
 
     @Override public String toString() {
         return "LibraryCachingConfiguration{refreshTimeMinutes=" + refreshTimeMinutes + ", excludedVersions="
-                + excludedVersionsStr + '}';
+                + excludedVersionsStr + ", keyByRevision=" + keyByRevision + '}';
     }
 
     public static FilePath getGlobalLibrariesCacheDir() {

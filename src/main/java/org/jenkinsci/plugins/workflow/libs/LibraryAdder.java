@@ -25,6 +25,7 @@
 package org.jenkinsci.plugins.workflow.libs;
 
 import hudson.AbortException;
+import jenkins.scm.api.SCMRevision;
 import hudson.Extension;
 import hudson.ExtensionList;
 import hudson.FilePath;
@@ -176,10 +177,10 @@ import org.jenkinsci.plugins.workflow.flow.FlowCopier;
         EXPIRED;
     }
 
-    private static CacheStatus getCacheStatus(@NonNull LibraryCachingConfiguration cachingConfiguration, @NonNull final FilePath versionCacheDir)
+    private static CacheStatus getCacheStatus(@NonNull LibraryCachingConfiguration cachingConfiguration, @NonNull final FilePath versionCacheDir, boolean immutable)
           throws IOException, InterruptedException
     {
-        if (cachingConfiguration.isRefreshEnabled()) {
+        if (!immutable && cachingConfiguration.isRefreshEnabled()) {
             final long cachingMilliseconds = cachingConfiguration.getRefreshTimeMilliseconds();
 
             if(versionCacheDir.exists()) {
@@ -215,9 +216,10 @@ import org.jenkinsci.plugins.workflow.flow.FlowCopier;
         LibraryCachingConfiguration cachingConfiguration = record.cachingConfiguration;
         FilePath libDir = new FilePath(execution.getOwner().getRootDir()).child("libs/" + record.getDirectoryName());
         Boolean shouldCache = cachingConfiguration != null;
-        final FilePath versionCacheDir = new FilePath(LibraryCachingConfiguration.getGlobalLibrariesCacheDir(), record.getDirectoryName());
+        FilePath versionCacheDir = new FilePath(LibraryCachingConfiguration.getGlobalLibrariesCacheDir(), record.getDirectoryName());
         ReentrantReadWriteLock retrieveLock = getReadWriteLockFor(record.getDirectoryName());
-        final FilePath lastReadFile = new FilePath(versionCacheDir, LibraryCachingConfiguration.LAST_READ_FILE);
+        FilePath lastReadFile = new FilePath(versionCacheDir, LibraryCachingConfiguration.LAST_READ_FILE);
+        SCMRevision revision = null;
 
         if(shouldCache && cachingConfiguration.isExcluded(version)) {
             listener.getLogger().println("Library " + libraryLogString + " is excluded from caching.");
@@ -228,15 +230,25 @@ import org.jenkinsci.plugins.workflow.flow.FlowCopier;
         //else check if that version is included and then cache only that version
 
         if((shouldCache && cachingConfiguration.isIncluded(version)) || (shouldCache && cachingConfiguration.getIncludedVersionsStr() == null)) {
+            if (cachingConfiguration.isKeyByRevision() && retriever instanceof SCMSourceRetriever scmRetriever) {
+                // One cheap lookup (git ls-remote) instead of trusting a timer: the entry for a
+                // revision is always current, and a moved branch simply maps to a new entry.
+                revision = scmRetriever.resolve(name, version, run, listener);
+                String cacheKey = LibraryRecord.directoryNameFor(record.getDirectoryName(), revision.toString());
+                listener.getLogger().println("Library " + libraryLogString + " resolved to " + revision + " for caching.");
+                versionCacheDir = new FilePath(LibraryCachingConfiguration.getGlobalLibrariesCacheDir(), cacheKey);
+                retrieveLock = getReadWriteLockFor(cacheKey);
+                lastReadFile = new FilePath(versionCacheDir, LibraryCachingConfiguration.LAST_READ_FILE);
+            }
             retrieveLock.readLock().lockInterruptibly();
             try {
-                CacheStatus cacheStatus = getCacheStatus(cachingConfiguration, versionCacheDir);
+                CacheStatus cacheStatus = getCacheStatus(cachingConfiguration, versionCacheDir, revision != null);
                 if (cacheStatus == CacheStatus.DOES_NOT_EXIST || cacheStatus == CacheStatus.EXPIRED || cacheStatus == CacheStatus.EMPTY) {
                     retrieveLock.readLock().unlock();
                     retrieveLock.writeLock().lockInterruptibly();
                     try {
                       boolean retrieve = false;
-                      switch (getCacheStatus(cachingConfiguration, versionCacheDir)) {
+                      switch (getCacheStatus(cachingConfiguration, versionCacheDir, revision != null)) {
                           case VALID:
                               listener.getLogger().println("Library " + libraryLogString + " is cached. Copying from cache.");
                               break;
@@ -261,7 +273,11 @@ import org.jenkinsci.plugins.workflow.flow.FlowCopier;
                             versionCacheDir.mkdirs();
                             // try to retrieve the library and delete the versionCacheDir if it fails
                             try {
-                                retriever.retrieve(name, version, changelog, versionCacheDir, run, listener);
+                                if (revision != null) {
+                                    ((SCMSourceRetriever) retriever).retrieve(name, revision, changelog, versionCacheDir, run, listener);
+                                } else {
+                                    retriever.retrieve(name, version, changelog, versionCacheDir, run, listener);
+                                }
                                 if (getUrlsForLibDir(versionCacheDir).isEmpty()) {
                                     // Get job name and build number from run
                                     String jobName = run.getParent().getFullName();

@@ -72,10 +72,20 @@ public class SCMSourceRetriever extends SCMBasedRetriever {
     }
 
     @Override public void retrieve(String name, String version, boolean changelog, FilePath target, Run<?, ?> run, TaskListener listener) throws Exception {
+        retrieve(name, resolve(name, version, run, listener), changelog, target, run, listener);
+    }
+
+    /** Resolves {@code version} (a branch, tag or hash) to the exact revision it points at now. */
+    SCMRevision resolve(String name, String version, Run<?, ?> run, TaskListener listener) throws Exception {
         SCMRevision revision = retrySCMOperation(listener, () -> scm.fetch(version, listener, run.getParent()));
         if (revision == null) {
             throw new AbortException("No version " + version + " found for library " + name);
         }
+        return revision;
+    }
+
+    /** Checks out an already resolved revision, so callers that resolved it do not resolve it twice. */
+    void retrieve(String name, SCMRevision revision, boolean changelog, FilePath target, Run<?, ?> run, TaskListener listener) throws Exception {
         doRetrieve(name, changelog, scm.build(revision.getHead(), revision), target, run, listener);
     }
 
